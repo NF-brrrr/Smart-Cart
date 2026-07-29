@@ -1,16 +1,18 @@
 #include "mainwindow.h"
+#include "ui_mainwindow.h"
 #include <QVBoxLayout>
 #include <QDebug>
 #include <QTimer>
+#include <QUrl>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , m_esp32Capture(new BarcodeCapture(this))
+    , m_esp32Stream(new Esp32CamStream(this))
+    , m_pcCapture(new PcCameraCapture(this))
 {
     ui->setupUi(this);
-
-    btClient = new BtConnection;
-    btClient->startScan();
 
     setWindowTitle("Smart Cart");
     resize(1280, 800);
@@ -35,8 +37,11 @@ MainWindow::MainWindow(QWidget *parent)
     dashboardWidget = new QWidget(centralWidget);
     dashboardWidget->setStyleSheet("background-color: #070D19;");
 
+    contentStack = new QStackedWidget(centralWidget);
+    contentStack->addWidget(dashboardWidget); // page 0: Dashboard
+
     mainLayout->addWidget(sidebarWidget);
-    mainLayout->addWidget(dashboardWidget);
+    mainLayout->addWidget(contentStack);
 
     barMenu = new QVBoxLayout(sidebarWidget);
     barMenu->setContentsMargins(20, 30, 20, 20);
@@ -53,9 +58,10 @@ MainWindow::MainWindow(QWidget *parent)
     btnAjoutproduit->setStyleSheet(
         "QPushButton { color: #4EA2E4; }"
         "QPushButton:checked { color: #FFFFFF; }"
-    );
+        );
     btnAjoutproduit->setCheckable(true);
     barMenu->addWidget(btnAjoutproduit);
+
     QPushButton *btnLancercaddie = new QPushButton("Lancer Caddie",sidebarWidget);
     btnLancercaddie->setStyleSheet(
         "QPushButton { color: #4EA2E4; }"
@@ -63,6 +69,20 @@ MainWindow::MainWindow(QWidget *parent)
         );
     btnLancercaddie->setCheckable(true);
     barMenu->addWidget(btnLancercaddie);
+
+    QPushButton *btnScannerCodeBar = new QPushButton("Scanner CodeBar", sidebarWidget);
+    btnScannerCodeBar->setStyleSheet(
+        "QPushButton { color: #4EA2E4; }"
+        "QPushButton:checked { color: #FFFFFF; }"
+        );
+    btnScannerCodeBar->setCheckable(true);
+    barMenu->addWidget(btnScannerCodeBar);
+
+    QButtonGroup *sidebarButtonGroup = new QButtonGroup(this);
+    sidebarButtonGroup->setExclusive(true);
+    sidebarButtonGroup->addButton(btnAjoutproduit);
+    sidebarButtonGroup->addButton(btnLancercaddie);
+    sidebarButtonGroup->addButton(btnScannerCodeBar);
 
     QSpacerItem *spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
     barMenu->addItem(spacer);
@@ -82,108 +102,215 @@ MainWindow::MainWindow(QWidget *parent)
 
     barMenu->addWidget(statusWidget);
 
+    m_connectionCheckManager = new QNetworkAccessManager(this);
+    m_connectionCheckTimer = new QTimer(this);
+    connect(m_connectionCheckTimer, &QTimer::timeout, this, &MainWindow::verifyConnection);
+    m_connectionCheckTimer->start(5000);
+
+    buildScanPage();
+
     connect(btnConnection, &QPushButton::clicked, this, [=](){ verifyConnection(); });
     connect(btnLancercaddie,&QPushButton::clicked,this,[=] () { lancercaddie();});
+    connect(btnScannerCodeBar, &QPushButton::clicked, this, [=](){ scannerCodeBar(); });
     verifyConnection();
 }
 
 void MainWindow::verifyConnection(){
-    bool isConnected = (btClient->getRxCharacteristic().isValid() && btClient->getTxCharacteristic().isValid());
+    QNetworkRequest request(QUrl("http://192.168.4.1/status"));
+    request.setTransferTimeout(2000); // ms — don't let the UI hang if the hotspot isn't joined
 
-    if(isConnected){
+    QNetworkReply *reply = m_connectionCheckManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        updateConnectionUi(reply->error() == QNetworkReply::NoError);
+    });
+}
+
+void MainWindow::updateConnectionUi(bool connected)
+{
+    if (connected) {
         statusWidget->setStyleSheet("background-color: #10B981; border-radius: 8px;");
-        btnConnection->setStyleSheet("background-color: transparent; border: none; color: white; font-weight: bold;");
         btnConnection->setText("Connected");
-    }
-    else{
+    } else {
         statusWidget->setStyleSheet("background-color: red; border-radius: 8px;");
-        btnConnection->setStyleSheet("background-color: transparent; border: none; color: white; font-weight: bold;");
         btnConnection->setText("Non connecte");
+    }
+    btnConnection->setStyleSheet("background-color: transparent; border: none; color: white; font-weight: bold;");
+}
+
+void MainWindow::lancercaddie()
+{
+
+}
+
+void MainWindow::buildScanPage()
+{
+    scanPageWidget = new QWidget(contentStack);
+    scanPageWidget->setStyleSheet("background-color: #070D19;");
+
+    QVBoxLayout *scanLayout = new QVBoxLayout(scanPageWidget);
+    scanLayout->setContentsMargins(30, 30, 30, 30);
+    scanLayout->setSpacing(20);
+
+    QLabel *scanTitle = new QLabel("<b style='color: white; font-size: 22px;'>Scanner CodeBar</b><br>"
+                                   "<span style='color: #718096; font-size: 13px;'>Scanner un produit via la caméra ESP32 ou la webcam PC</span>", scanPageWidget);
+    scanLayout->addWidget(scanTitle);
+
+    scanSourceCombo = new QComboBox(scanPageWidget);
+    scanSourceCombo->addItem("Caméra ESP32 (WiFi)");
+    scanSourceCombo->addItem("Webcam PC");
+    scanLayout->addWidget(scanSourceCombo);
+
+    scanDisplayStack = new QStackedWidget(scanPageWidget);
+
+    scanResultStillLabel = new QLabel("Aucune photo", scanPageWidget);
+    scanResultStillLabel->setAlignment(Qt::AlignCenter);
+    scanResultStillLabel->setMinimumSize(320, 240);
+    scanResultStillLabel->setStyleSheet("background-color: black; color: white;");
+
+    scanEsp32LiveLabel = new QLabel("Connexion au flux ESP32...", scanPageWidget);
+    scanEsp32LiveLabel->setAlignment(Qt::AlignCenter);
+    scanEsp32LiveLabel->setMinimumSize(320, 240);
+    scanEsp32LiveLabel->setStyleSheet("background-color: black; color: white;");
+
+    m_pcCapture->viewfinder()->setMinimumSize(320, 240);
+
+    scanDisplayStack->addWidget(scanResultStillLabel);      // index 0: captured still + result
+    scanDisplayStack->addWidget(scanEsp32LiveLabel);         // index 1: ESP32 live stream
+    scanDisplayStack->addWidget(m_pcCapture->viewfinder());  // index 2: PC webcam live view
+
+    scanLayout->addWidget(scanDisplayStack);
+
+    scanResultLabel = new QLabel("Code scanné : —", scanPageWidget);
+    scanResultLabel->setStyleSheet("color: white;");
+    scanLayout->addWidget(scanResultLabel);
+
+    scanButton = new QPushButton("Scanner", scanPageWidget);
+    scanButton->setStyleSheet("QPushButton { color: white; background-color: #2D63C8; border-radius: 6px; padding: 10px; }");
+    scanLayout->addWidget(scanButton);
+    scanLayout->addStretch();
+
+    connect(scanSourceCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onScanSourceChanged);
+    connect(scanButton, &QPushButton::clicked, this, &MainWindow::onScanButtonClicked);
+
+    connect(m_esp32Capture, &BarcodeCapture::imageReady, this, &MainWindow::onEsp32CaptureReady);
+    connect(m_esp32Capture, &BarcodeCapture::captureError, this, &MainWindow::onEsp32CaptureError);
+
+    connect(m_esp32Stream, &Esp32CamStream::frameReady, this, &MainWindow::onEsp32StreamFrame);
+    connect(m_esp32Stream, &Esp32CamStream::connectionError, this, &MainWindow::onEsp32StreamError);
+
+    connect(m_pcCapture, &PcCameraCapture::imageReady, this, &MainWindow::onPcImageReady);
+    connect(m_pcCapture, &PcCameraCapture::cameraError, this, &MainWindow::onPcError);
+
+    contentStack->addWidget(scanPageWidget); // page 1: Scanner CodeBar
+}
+
+void MainWindow::scannerCodeBar()
+{
+    contentStack->setCurrentWidget(scanPageWidget);
+    m_currentScanSource = ScanSource::Esp32;
+    scanSourceCombo->setCurrentIndex(0);
+    m_pcCapture->stop();
+    m_esp32Stream->start(QUrl("http://192.168.4.1:81/stream"));
+    scanDisplayStack->setCurrentIndex(1);
+}
+
+void MainWindow::onScanSourceChanged(int index)
+{
+    m_currentScanSource = (index == 1) ? ScanSource::Pc : ScanSource::Esp32;
+    scanResultLabel->setText("Code scanné : —");
+
+    if (m_currentScanSource == ScanSource::Pc) {
+        m_esp32Stream->stop();
+        m_pcCapture->start();
+        scanDisplayStack->setCurrentIndex(2);
+    } else {
+        m_pcCapture->stop();
+        m_esp32Stream->start(QUrl("http://192.168.4.1:81/stream"));
+        scanDisplayStack->setCurrentIndex(1);
     }
 }
 
-void MainWindow::tableauDebord()
+void MainWindow::onScanButtonClicked()
 {
-    QVBoxLayout *dashlayout = new QVBoxLayout(dashboardWidget);
-    dashlayout->setContentsMargins(30,30,30,30);
-    dashlayout->setSpacing(20);
+    scanButton->setEnabled(false);
+    scanButton->setText("Scan en cours...");
 
-    QLabel *dashTitle = new QLabel("<b style='color: white; font-size: 22px;'>Tableau de bord</b><br>"
-                                   "<span style='color: #718096; font-size: 13px;'>Aperçu en temps réel de votre sac intelligent</span>", dashboardWidget);
-    dashlayout->addWidget(dashTitle);
+    if (m_currentScanSource == ScanSource::Esp32) {
+        m_esp32Capture->capture(QUrl("http://192.168.4.1/capture"));
+    } else {
+        m_pcCapture->captureFrame();
+    }
+}
 
-    QGridLayout *cardsGrid = new QGridLayout();
-    cardsGrid->setSpacing(20);
-    QString cardStyle = "QWidget { background-color: #0B1224; border: 1px solid #1E293B; border-radius: 12px; }";
+void MainWindow::onEsp32StreamFrame(const QImage &frame)
+{
+    if (m_currentScanSource == ScanSource::Esp32 && scanDisplayStack->currentIndex() == 1) {
+        scanEsp32LiveLabel->setPixmap(QPixmap::fromImage(frame).scaled(
+            scanEsp32LiveLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+}
 
-    // CARTE 1 : État
-    QWidget *cardStatus = new QWidget(dashboardWidget);
-    cardStatus->setStyleSheet(cardStyle);
-    QVBoxLayout *layoutStatus = new QVBoxLayout(cardStatus);
-    layoutStatus->setContentsMargins(20, 20, 20, 20);
+void MainWindow::onEsp32StreamError(const QString &message)
+{
+    scanEsp32LiveLabel->setText("Erreur de flux : " + message);
+}
 
-    QLabel *lblStatusTitle = new QLabel("<span style='color: #A0AEC0; font-size: 13px; font-weight: bold;'>ÉTAT DU SAC</span>", cardStatus);
-    QLabel *lblStatusVal = new QLabel("<span style='color: #10B981; font-size: 20px; font-weight: bold;'>Fermé & Sécurisé</span>", cardStatus);
-    layoutStatus->addWidget(lblStatusTitle);
-    layoutStatus->addWidget(lblStatusVal);
-    layoutStatus->addStretch();
+void MainWindow::onEsp32CaptureReady(const QImage &image)
+{
+    processDecodedImage(image);
+}
 
-    // CARTE 2 : Authentification
-    QWidget *cardAuth = new QWidget(dashboardWidget);
-    cardAuth->setStyleSheet(cardStyle);
-    QVBoxLayout *layoutAuth = new QVBoxLayout(cardAuth);
-    layoutAuth->setContentsMargins(20, 20, 20, 20);
+void MainWindow::onEsp32CaptureError(const QString &message)
+{
+    scanButton->setEnabled(true);
+    scanButton->setText("Scanner");
+    scanResultLabel->setText("Erreur : " + message);
+}
 
-    QLabel *lblAuthTitle = new QLabel("<span style='color: #A0AEC0; font-size: 13px; font-weight: bold;'>AUTHENTIFICATION</span>", cardAuth);
-    QLabel *lblAuthVal = new QLabel("<span style='color: #4EA2E4; font-size: 20px; font-weight: bold;'>Verrouillé</span>", cardAuth);
-    layoutAuth->addWidget(lblAuthTitle);
-    layoutAuth->addWidget(lblAuthVal);
-    layoutAuth->addStretch();
+void MainWindow::onPcImageReady(const QImage &image)
+{
+    processDecodedImage(image);
+    QTimer::singleShot(1500, this, &MainWindow::resumeScanLiveView);
+}
 
-    // CARTE 3 : Humidité
-    QWidget *cardHum = new QWidget(dashboardWidget);
-    cardHum->setStyleSheet(cardStyle);
-    QVBoxLayout *layoutHum = new QVBoxLayout(cardHum);
-    layoutHum->setContentsMargins(20, 20, 20, 20);
+void MainWindow::onPcError(const QString &message)
+{
+    scanButton->setEnabled(true);
+    scanButton->setText("Scanner");
+    scanResultLabel->setText("Erreur : " + message);
+}
 
-    QLabel *lblHumTitle = new QLabel("<span style='color: #A0AEC0; font-size: 13px; font-weight: bold;'>HUMIDITÉ INTERNE</span>", cardHum);
-    QLabel *lblHumVal = new QLabel("<span style='color: white; font-size: 28px; font-weight: bold;'>42 %</span>", cardHum);
-    QLabel *lblHumSub = new QLabel("<span style='color: #10B981; font-size: 12px;'>Niveau optimal</span>", cardHum);
-    layoutHum->addWidget(lblHumTitle);
-    layoutHum->addWidget(lblHumVal);
-    layoutHum->addWidget(lblHumSub);
-    layoutHum->addStretch();
+void MainWindow::resumeScanLiveView()
+{
+    scanDisplayStack->setCurrentIndex(m_currentScanSource == ScanSource::Esp32 ? 1 : 2);
+}
 
-    // CARTE 4 : Batterie
-    QWidget *cardBat = new QWidget(dashboardWidget);
-    cardBat->setStyleSheet(cardStyle);
-    QVBoxLayout *layoutBat = new QVBoxLayout(cardBat);
-    layoutBat->setContentsMargins(20, 20, 20, 20);
+void MainWindow::processDecodedImage(const QImage &image)
+{
+    scanButton->setEnabled(true);
+    scanButton->setText("Scanner");
 
-    QLabel *lblBatTitle = new QLabel("<span style='color: #A0AEC0; font-size: 13px; font-weight: bold;'>BATTERIE</span>", cardBat);
-    QLabel *lblBatVal = new QLabel("<span style='color: white; font-size: 28px; font-weight: bold;'>85 %</span>", cardBat);
-    QLabel *lblBatSub = new QLabel("<span style='color: #10B981; font-size: 12px;'>En fonctionnement</span>", cardBat);
-    layoutBat->addWidget(lblBatTitle);
-    layoutBat->addWidget(lblBatVal);
-    layoutBat->addWidget(lblBatSub);
-    layoutBat->addStretch();
+    scanDisplayStack->setCurrentIndex(0);
+    scanResultStillLabel->setPixmap(QPixmap::fromImage(image).scaled(
+        scanResultStillLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 
-    cardsGrid->addWidget(cardStatus, 0, 0);
-    cardsGrid->addWidget(cardAuth, 0, 1);
-    cardsGrid->addWidget(cardHum, 1, 0);
-    cardsGrid->addWidget(cardBat, 1, 1);
+    QList<DecodedBarcode> codes = decodeBarcodes(image);
+    if (codes.isEmpty()) {
+        scanResultLabel->setText("Code scanné : aucun trouvé — réessayez");
+    } else {
+        scanResultLabel->setText("Code scanné : " + codes.first().data +
+                                 " (" + codes.first().type + ")");
+    }
 
-    dashlayout->addLayout(cardsGrid);
-    dashlayout->addStretch();
-    QSpacerItem *space = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
-    dashlayout->addItem(space);
+    if (m_currentScanSource == ScanSource::Esp32) {
+        QTimer::singleShot(1500, this, &MainWindow::resumeScanLiveView);
+    }
 }
 
 MainWindow::~MainWindow()
 {
+    m_esp32Stream->stop();
+    m_pcCapture->stop();
     delete ui;
-}
-void MainWindow::lancercaddie()
-{
-
 }
