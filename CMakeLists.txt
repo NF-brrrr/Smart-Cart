@@ -11,7 +11,6 @@ qt_add_executable(SmartCart
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
-    btconnection.h btconnection.cpp
 )
 
 target_link_libraries(SmartCart
