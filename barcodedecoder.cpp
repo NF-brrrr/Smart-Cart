@@ -1,6 +1,11 @@
 // barcodedecoder.cpp
 #include "barcodedecoder.h"
 #include <zbar.h>
+#include <QFile>
+#include <QTextStream>
+#include <QStringList>
+#include "product.h"
+#include <QDebug>
 
 QList<DecodedBarcode> decodeBarcodes(const QImage &image)
 {
@@ -28,4 +33,41 @@ QList<DecodedBarcode> decodeBarcodes(const QImage &image)
     }
 
     return results;
+}
+
+Product *searchProductInDataBase(QList<DecodedBarcode> code)
+{
+    QString productCode = code.first().data;
+    QFile databaseFile(":/database.csv");
+
+    QTextStream content(&databaseFile);
+
+    if (!databaseFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "Cannot open file for reading:" << databaseFile.errorString();
+        return NULL;
+    }
+
+    while (!content.atEnd()) {
+        QString product = content.readLine();
+        QStringList field = product.split(',');
+
+        if (field[1] == productCode) {
+            qDebug() << "Product Found!!";
+            Product *newProduct{new Product(field[1],
+                                            field[2],
+                                            field[3],
+                                            field[4],
+                                            field[5].toFloat(),
+                                            field[6],
+                                            field[8],
+                                            field[9],
+                                            field[10],
+                                            field[11])};
+            return newProduct;
+        }
+    }
+
+    databaseFile.close();
+
+    return NULL;
 }

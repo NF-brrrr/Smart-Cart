@@ -54,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent)
     barMenu->addWidget(titleLabel);
     barMenu->addSpacing(20);
 
-    QPushButton *btnAjoutproduit = new QPushButton("Ajouter du produit", sidebarWidget);
+    QPushButton *btnAjoutproduit = new QPushButton("Contenus", sidebarWidget);
     btnAjoutproduit->setStyleSheet(
         "QPushButton { color: #4EA2E4; }"
         "QPushButton:checked { color: #FFFFFF; }"
@@ -107,6 +107,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_connectionCheckTimer, &QTimer::timeout, this, &MainWindow::verifyConnection);
     m_connectionCheckTimer->start(5000);
 
+    cartContentWidget = new QWidget(contentStack);
+    contentStack->addWidget(cartContentWidget);
+
     buildScanPage();
 
     connect(btnConnection, &QPushButton::clicked, this, [=](){ verifyConnection(); });
@@ -148,7 +151,7 @@ void MainWindow::buildScanPage()
     scanPageWidget = new QWidget(contentStack);
     scanPageWidget->setStyleSheet("background-color: #070D19;");
 
-    QVBoxLayout *scanLayout = new QVBoxLayout(scanPageWidget);
+    scanLayout = new QVBoxLayout(scanPageWidget);
     scanLayout->setContentsMargins(30, 30, 30, 30);
     scanLayout->setSpacing(20);
 
@@ -301,10 +304,99 @@ void MainWindow::processDecodedImage(const QImage &image)
     } else {
         scanResultLabel->setText("Code scanné : " + codes.first().data +
                                  " (" + codes.first().type + ")");
+        if (searchProductInDataBase(codes) != NULL) {
+            Product *product = searchProductInDataBase(codes);
+            showProductInfo(product);
+        }
     }
 
     if (m_currentScanSource == ScanSource::Esp32) {
         QTimer::singleShot(1500, this, &MainWindow::resumeScanLiveView);
+    }
+}
+
+void MainWindow::showProductInfo(Product *product)
+{
+    productCode = new QLabel("<b style='color: white; font-size: 14px;'>Product Code :  </b>"
+                             "<span>"
+                                 + product->code + "</span>",
+                             scanPageWidget);
+    productName = new QLabel("<b style='color: white; font-size: 14px;'>Name :  </b>"
+                             "<span>"
+                                 + product->name + "</span>",
+                             scanPageWidget);
+    productCategory = new QLabel("<b style='color: white; font-size: 14px;'>Category :  </b>"
+                                 "<span>"
+                                     + product->category + "</span>",
+                                 scanPageWidget);
+    productBrand = new QLabel("<b style='color: white; font-size: 14px;'>Brand :  </b>"
+                              "<span>"
+                                  + product->brand + "</span>",
+                              scanPageWidget);
+    productPrice = new QLabel("<b style='color: white; font-size: 14px;'>Price :  </b>"
+                              "<span>"
+                                  + QString::number(product->price) + " ₹</span>",
+                              scanPageWidget);
+    productQuantity = new QLabel("<b style='color: white; font-size: 14px;'>Quantity :  </b>"
+                                 "<span>"
+                                     + product->quantity + "</span>",
+                                 scanPageWidget);
+    productManufacturer
+        = new QLabel("<b style='color: white; font-size: 14px;'>Manufacturer :  </b>"
+                     "<span>"
+                         + product->manufacturer + "</span>",
+                     scanPageWidget);
+    productSupplier = new QLabel("<b style='color: white; font-size: 14px;'>Supplier :  </b>"
+                                 "<span>"
+                                     + product->supplier + "</span>",
+                                 scanPageWidget);
+    expiryDate = new QLabel("<b style='color: white; font-size: 14px;'>Expiry Date :  </b>"
+                            "<span>"
+                                + product->expiry_date + "</span>",
+                            scanPageWidget);
+    manufactureDate
+        = new QLabel("<b style='color: white; font-size: 14px;'>Manufacture Date :  </b>"
+                     "<span>"
+                         + product->manufacture_date + "</span>",
+                     scanPageWidget);
+    addToCartBtn = new QPushButton;
+    addToCartBtn->setStyleSheet(
+        "color: white; background-color: #2D63C8; border-radius: 6px; padding: 10px;");
+    addToCartBtn->setText("Add To Cart");
+    addToCartBtn->setCheckable(true);
+    QHBoxLayout *productLayout = new QHBoxLayout;
+    QVBoxLayout *column1 = new QVBoxLayout;
+    QVBoxLayout *column2 = new QVBoxLayout;
+    column1->addWidget(productCode);
+    column1->addWidget(productName);
+    column1->addWidget(productCategory);
+    column1->addWidget(productBrand);
+    column1->addWidget(productPrice);
+    column2->addWidget(productQuantity);
+    column2->addWidget(productManufacturer);
+    column2->addWidget(productSupplier);
+    column2->addWidget(manufactureDate);
+    column2->addWidget(expiryDate);
+    column2->addWidget(addToCartBtn);
+    productLayout->addLayout(column1);
+    productLayout->addLayout(column2);
+    scanLayout->addLayout(productLayout);
+}
+
+void MainWindow::addToCart(Product *product)
+{
+    bool alreadyInCart = false;
+    int index = 0;
+    for (int i = 0; i < cart.length(); i++) {
+        if (cart[i]->code == product->code) {
+            alreadyInCart = true;
+            index = i;
+        }
+    }
+    if (alreadyInCart) {
+        cart[index]->inCart++;
+    } else {
+        cart.push_back(product);
     }
 }
 

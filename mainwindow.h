@@ -18,6 +18,7 @@
 #include "barcodedecoder.h"
 #include "esp32camstream.h"
 #include "pccameracapture.h"
+#include "product.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -36,6 +37,7 @@ private slots:
     void verifyConnection();
     void lancercaddie();
     void scannerCodeBar();
+    void addToCart(Product* product);
 
     void onScanSourceChanged(int index);
     void onScanButtonClicked();
@@ -51,6 +53,7 @@ private:
     enum class ScanSource { Esp32, Pc };
     void processDecodedImage(const QImage &image);
     void buildScanPage();
+    void showProductInfo(Product* product);
 
     QWidget *centralWidget;
     QHBoxLayout *mainLayout;
@@ -61,10 +64,13 @@ private:
     QWidget *statusWidget;
     QWidget *sidebarWidget;
     QWidget *dashboardWidget;
+    QWidget *cartContentWidget;
+    QWidget *cartContentLayout;
 
     QStackedWidget *contentStack;
 
     // Scanner CodeBar page
+    QVBoxLayout *scanLayout;
     QWidget *scanPageWidget;
     QComboBox *scanSourceCombo;
     QStackedWidget *scanDisplayStack;
@@ -81,6 +87,20 @@ private:
     QNetworkAccessManager *m_connectionCheckManager;
     QTimer *m_connectionCheckTimer;
     void updateConnectionUi(bool connected);
+
+    //Product Info
+    QLabel *productCode;
+    QLabel *productName;
+    QLabel *productCategory;
+    QLabel *productBrand;
+    QLabel *productPrice;
+    QLabel *productQuantity;
+    QLabel *productManufacturer;
+    QLabel *productSupplier;
+    QLabel *expiryDate;
+    QLabel *manufactureDate;
+    QPushButton *addToCartBtn;
+    QList<Product*> cart;
 
     Ui::MainWindow *ui;
 };

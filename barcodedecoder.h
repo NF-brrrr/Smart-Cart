@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QString>
 #include <QList>
+#include "product.h"
 
 struct DecodedBarcode {
     QString type;
@@ -12,5 +13,6 @@ struct DecodedBarcode {
 };
 
 QList<DecodedBarcode> decodeBarcodes(const QImage &image);
+Product *searchProductInDataBase(QList<DecodedBarcode> code);
 
 #endif

@@ -19,16 +19,26 @@ set(PROJECT_SOURCES
         mainwindow.cpp
         mainwindow.h
         mainwindow.ui
+        esp32camstream.h esp32camstream.cpp
+        barcodecapture.h barcodecapture.cpp
+        barcodedecoder.h barcodedecoder.cpp
+        pccameracapture.h pccameracapture.cpp
+)
+
+set(RESOURCES
+    database.csv
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(SmartCart
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
-        esp32camstream.h esp32camstream.cpp
-        barcodecapture.h barcodecapture.cpp
-        barcodedecoder.h barcodedecoder.cpp
-        pccameracapture.h pccameracapture.cpp
+        product.h product.cpp
+    )
+    qt_add_resources(SmartCart
+        PREFIX "/"
+        FILES
+            ${RESOURCES}
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET SmartCart APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
